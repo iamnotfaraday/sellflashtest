@@ -1,4 +1,5 @@
 package com.faraday.flashsell.controller;
+import com.faraday.flashsell.common.utils.JwtUtils;
 
 import com.faraday.flashsell.common.response.Result;
 import com.faraday.flashsell.model.dto.SeckillDTO;
@@ -14,6 +15,8 @@ public class SeckillController {
     @Autowired
     private SeckillService seckillService;
 
+    @Autowired
+    private JwtUtils jwtUtils;
     /**
      * 秒杀接口
      *
@@ -27,7 +30,9 @@ public class SeckillController {
      *   失败 → { code: 50004, message: "库存不足" }
      */
     @PostMapping("/execute")
-    public Result<SeckillResultVO> execute(@RequestBody SeckillDTO dto) {
-        return seckillService.execute(dto);
+    public Result<SeckillResultVO> execute(@RequestBody SeckillDTO dto, @RequestHeader("Authorization") String authHeader) {
+        String token = authHeader.replace("Bearer ", "");
+        Long userId = jwtUtils.getUserId(token);
+        return seckillService.execute(dto, userId);
     }
 }

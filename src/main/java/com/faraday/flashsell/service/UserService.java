@@ -9,6 +9,7 @@ import com.faraday.flashsell.dao.UserMapper;
 import com.faraday.flashsell.model.dto.LoginDTO;
 import com.faraday.flashsell.model.entity.User;
 import com.faraday.flashsell.model.vo.LoginVO;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +21,13 @@ public class UserService {
 
     @Autowired
     private JwtUtils jwtUtils;
+
+    /**
+     * 查询所有用户（供 TokenGenerator 等工具使用）
+     */
+    public List<User> list() {
+        return userMapper.selectList(null);
+    }
 
     public Result<LoginVO> login(LoginDTO dto) {
         // 查用户

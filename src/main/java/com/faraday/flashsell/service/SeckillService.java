@@ -1,5 +1,6 @@
 package com.faraday.flashsell.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.faraday.flashsell.common.response.Result;
 import com.faraday.flashsell.dao.OrderMapper;
 import com.faraday.flashsell.dao.SeckillGoodsMapper;
@@ -9,6 +10,7 @@ import com.faraday.flashsell.model.entity.SeckillGoods;
 import com.faraday.flashsell.model.vo.SeckillResultVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -67,7 +69,8 @@ public class SeckillService {
      * 2. 性能：MySQL 扛不住高并发读写
      * 3. 无排队：1000 个请求同时打 DB，连接池瞬间满
      */
-    public Result<SeckillResultVO> execute(SeckillDTO dto) {
+    @Transactional
+    public Result<SeckillResultVO> execute(SeckillDTO dto, Long userId) {
 
         // ─── 第一步：查秒杀商品 ───
         SeckillGoods goods = seckillGoodsMapper.selectById(dto.getGoodsId());
@@ -81,6 +84,7 @@ public class SeckillService {
             return Result.fail(50002, "活动未开始");
         }
         if (now.isAfter(goods.getEndTime())) {
+            System.out.println("活动已结束");
             return Result.fail(50003, "活动已结束");
         }
 
@@ -95,14 +99,14 @@ public class SeckillService {
         //     ① 临时：SeckillDTO 里加个 userId 字段，前端传过来
         //     ② 正式：从 Authorization 头解析 JWT 拿到 userId
         //
-        //   OrderInfo existOrder = orderMapper.selectOne(
-        //       new LambdaQueryWrapper<OrderInfo>()
-        //           .eq(OrderInfo::getUserId, userId)
-        //           .eq(OrderInfo::getGoodsId, dto.getGoodsId())
-        //   );
-        //   if (existOrder != null) {
-        //       return Result.fail(50005, "你已经抢过了");
-        //   }
+        OrderInfo existOrder = orderMapper.selectOne(
+            new LambdaQueryWrapper<OrderInfo>()
+                .eq(OrderInfo::getUserId, userId)
+                .eq(OrderInfo::getGoodsId, dto.getGoodsId())
+        );
+        if (existOrder != null) {
+            return Result.fail(50005, "你已经抢过了");
+        }
 
         // ─── 第五步：扣库存 ───
         int affectedRows = seckillGoodsMapper.reduceStock(dto.getGoodsId());
@@ -116,7 +120,11 @@ public class SeckillService {
 
         // ─── 第六步：创建订单 ───
         OrderInfo order = new OrderInfo();
-        // TODO: 设置 user_id, goods_id, seckill_goods_id
+        order.setUserId(userId);
+        order.setGoodsId(goods.getGoodsId());
+        order.setSeckillGoodsId(goods.getId());
+//        order.setGoodsName(goods.getGoodsName());
+        order.setGoodsPrice(goods.getSeckillPrice());
         order.setOrderNumber(UUID.randomUUID().toString());
         order.setStatus(0);
         orderMapper.insert(order);
