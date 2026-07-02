@@ -26,6 +26,9 @@ public class SeckillGoods {
     /** 秒杀库存 */
     private Integer stock;
 
+    /** 乐观锁版本号 */
+    private Integer version;
+
     /** 秒杀开始时间 */
     private LocalDateTime startTime;
 

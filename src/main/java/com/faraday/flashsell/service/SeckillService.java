@@ -31,6 +31,9 @@ public class SeckillService {
     @Autowired
     private OrderMapper orderMapper;
 
+    /** 乐观锁最大重试次数 */
+    private static final int MAX_RETRY = 3;
+
     @Transactional
     public Result<SeckillResultVO> execute(SeckillDTO dto, Long userId) {
 
@@ -53,10 +56,14 @@ public class SeckillService {
             return Result.fail(ResultCode.ACTIVITY_ENDED);
         }
 
-        // ─── 第三步：防重复秒杀（快速路径） ───
+        // ─── 第三步：快速库存检查 ───
+        if (goods.getStock() <= 0) {
+            return Result.fail(ResultCode.SEC_KILL_NO_STOCK);
+        }
+
+        // ─── 第四步：防重复秒杀 ───
         // 说明：此处是快照读，并发下不一定准确，真正的兜底靠 order_info 表的
-        //       UNIQUE KEY (user_id, goods_id) 约束（见第六步的 catch）。
-        //       这个 SELECT 的作用只是提前拦截大部分重复请求，减少不必要的扣库存。
+        //       UNIQUE KEY (user_id, goods_id) 约束（见第七步的 catch）。
         OrderInfo existOrder = orderMapper.selectOne(
             new LambdaQueryWrapper<OrderInfo>()
                 .eq(OrderInfo::getUserId, userId)
@@ -66,14 +73,37 @@ public class SeckillService {
             return Result.fail(ResultCode.SEC_KILL_REPEAT);
         }
 
-        // ─── 第四步：扣库存（原子操作） ───
-        // WHERE stock > 0 是真正的库存防线，防止超卖
-        int affectedRows = seckillGoodsMapper.reduceStock(goods.getId());
+        // ─── 第五步：乐观锁扣库存（重试机制） ───
+        // 每次 UPDATE 携带当前 version，WHERE version = #{version} 保证互斥
+        // 冲突时：若库存还有则重试（最多3次），库存真没了则返回售罄
+        int affectedRows = 0;
+        Integer currentVersion = goods.getVersion();
+
+        for (int retry = 0; retry < MAX_RETRY; retry++) {
+            affectedRows = seckillGoodsMapper.reduceStock(goods.getId(), currentVersion);
+            if (affectedRows > 0) {
+                break; // 扣库存成功
+            }
+
+            // 失败 → 重新查询，区分"售罄"和"版本冲突"
+            SeckillGoods latest = seckillGoodsMapper.selectById(goods.getId());
+            if (latest.getStock() <= 0) {
+                log.info("goodsId={} 库存已售罄，放弃重试", dto.getGoodsId());
+                return Result.fail(ResultCode.SEC_KILL_NO_STOCK);
+            }
+
+            // 库存还在说明是版本冲突，换新版本重试
+            currentVersion = latest.getVersion();
+            log.warn("乐观锁冲突重试：userId={} goodsId={} retry={}/{} curVersion={}",
+                    userId, dto.getGoodsId(), retry + 1, MAX_RETRY, currentVersion);
+        }
+
         if (affectedRows == 0) {
+            log.warn("goodsId={} 乐观锁重试{}次仍失败", dto.getGoodsId(), MAX_RETRY);
             return Result.fail(ResultCode.SEC_KILL_NO_STOCK);
         }
 
-        // ─── 第五步：创建订单 ───
+        // ─── 第六步：创建订单 ───
         OrderInfo order = new OrderInfo();
         order.setUserId(userId);
         order.setGoodsId(goods.getGoodsId());
@@ -86,19 +116,19 @@ public class SeckillService {
         try {
             orderMapper.insert(order);
         } catch (DuplicateKeyException e) {
-            // ─── 第六步：唯一约束冲突处理 ───
+            // ─── 第七步：唯一约束冲突处理 ───
             // 触发的场景：
-            //   第三步的 SELECT 因为并发读到了过期快照，没拦住重复请求
-            //   导致第四步多扣了库存，第五步的 INSERT 被唯一约束挡住
+            //   第四步的 SELECT 因为并发读到了过期快照，没拦住重复请求
+            //   导致第五步多扣了库存，第六步的 INSERT 被唯一约束挡住
             //
-            // 处理方式：标记事务回滚 → 第四步扣掉的库存被自动归还
+            // 处理方式：标记事务回滚 → 第五步扣掉的库存被自动归还（MySQL 回滚）
             // 用户最终看到 "你已经抢过了"
             log.warn("重复秒杀拦截：userId={}, goodsId={}", userId, goods.getGoodsId());
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.fail(ResultCode.SEC_KILL_REPEAT);
         }
 
-        // ─── 第七步：返回 ───
+        // ─── 第八步：返回 ───
         return Result.success(new SeckillResultVO(String.valueOf(order.getId()), 0));
     }
 }
