@@ -13,7 +13,8 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # SQL 日志现在走 logback-spring.xml 里的 com.faraday.flashsell.dao
+    # 压测时不想看 SQL：把 logback 里 dao 的 level 改成 WARN 即可
 
 jwt:
   secret: flashsell-secret-key-must-be-at-least-256-bits-for-hs256!!

@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
@@ -34,13 +35,27 @@ public class SeckillService {
     /** 乐观锁最大重试次数 */
     private static final int MAX_RETRY = 3;
 
+//    @Transactional(isolation = Isolation.READ_COMMITTED)
     @Transactional
     public Result<SeckillResultVO> execute(SeckillDTO dto, Long userId) {
 
+        String t = Thread.currentThread().getName();
+
+        log.info(
+                "[{}] ===== BEGIN user={} =====",
+                t,
+                userId
+        );
         // ─── 第一步：查秒杀商品（按原始商品ID查秒杀活动） ───
         SeckillGoods goods = seckillGoodsMapper.selectOne(
             new LambdaQueryWrapper<SeckillGoods>()
                 .eq(SeckillGoods::getGoodsId, dto.getGoodsId())
+        );
+        log.info(
+                "[{}] FIRST_SELECT stock={} version={}",
+                t,
+                goods.getStock(),
+                goods.getVersion()
         );
         if (goods == null) {
             return Result.fail(ResultCode.NO_SEC_KILL_ACTIVITY);
@@ -80,26 +95,61 @@ public class SeckillService {
         Integer currentVersion = goods.getVersion();
 
         for (int retry = 0; retry < MAX_RETRY; retry++) {
+            log.info(
+                    "[{}] TRY_UPDATE retry={} useVersion={}",
+                    t,
+                    retry + 1,
+                    currentVersion
+            );
             affectedRows = seckillGoodsMapper.reduceStock(goods.getId(), currentVersion);
+
+            log.info(
+                    "[{}] UPDATE_RESULT rows={}",
+                    t,
+                    affectedRows
+            );
             if (affectedRows > 0) {
+                log.info(
+                        "[{}] UPDATE_SUCCESS version={}",
+                        t,
+                        currentVersion
+                );
                 break; // 扣库存成功
             }
 
             // 失败 → 重新查询，区分"售罄"和"版本冲突"
             SeckillGoods latest = seckillGoodsMapper.selectById(goods.getId());
+            log.info(
+                    "[{}] RETRY_SELECT stock={} version={}",
+                    t,
+                    latest.getStock(),
+                    latest.getVersion()
+            );
             if (latest.getStock() <= 0) {
-                log.info("goodsId={} 库存已售罄，放弃重试", dto.getGoodsId());
+                log.info(
+                        "[{}] STOCK_EMPTY stock={} version={}",
+                        t,
+                        latest.getStock(),
+                        latest.getVersion()
+                );
+                // log.info("goodsId={} 库存已售罄，放弃重试", dto.getGoodsId());
                 return Result.fail(ResultCode.SEC_KILL_NO_STOCK);
             }
 
             // 库存还在说明是版本冲突，换新版本重试
             currentVersion = latest.getVersion();
-            log.warn("乐观锁冲突重试：userId={} goodsId={} retry={}/{} curVersion={}",
-                    userId, dto.getGoodsId(), retry + 1, MAX_RETRY, currentVersion);
+            log.info(
+                    "[{}] CHANGE_VERSION -> {}",
+                    t,
+                    currentVersion
+            );
+//            log.warn("乐观锁冲突重试：userId={} goodsId={} retry={}/{} curVersion={}",
+//                    userId, dto.getGoodsId(), retry + 1, MAX_RETRY, currentVersion);
         }
 
         if (affectedRows == 0) {
-            log.warn("goodsId={} 乐观锁重试{}次仍失败", dto.getGoodsId(), MAX_RETRY);
+            log.info("[{}] RETRY_FAIL", t);
+            // log.warn("goodsId={} 乐观锁重试{}次仍失败", dto.getGoodsId(), MAX_RETRY);
             return Result.fail(ResultCode.SEC_KILL_NO_STOCK);
         }
 
@@ -115,6 +165,11 @@ public class SeckillService {
 
         try {
             orderMapper.insert(order);
+            log.info(
+                    "[{}] INSERT_ORDER_SUCCESS orderId={}",
+                    t,
+                    order.getId()
+            );
         } catch (DuplicateKeyException e) {
             // ─── 第七步：唯一约束冲突处理 ───
             // 触发的场景：

@@ -34,6 +34,11 @@ logs/
 ### AI 工具 ###
 .aider*
 
+### JMeter ###
+report/
+result.jtl
+*.jtl
+
 ### 临时文件 ###
 *.tmp
 *.bak

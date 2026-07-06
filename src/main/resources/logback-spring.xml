@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 每次启动生成一个时间戳，日志文件名会带上它 -->
+    <timestamp key="STARTUP" datePattern="yyyyMMdd-HHmmss"/>
+
+    <!-- ==================== 变量 ==================== -->
+    <!-- 日志文件存放目录，默认项目根目录下的 logs/ -->
+    <property name="LOG_HOME" value="./logs"/>
+    <!-- 通用日志文件名 -->
+    <property name="APP_NAME" value="flashsell"/>
+
+    <!-- ==================== 控制台输出（开发用，带颜色） ==================== -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%thread] %cyan(%logger{36}) - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== 通用文件（所有 INFO 级别日志） ==================== -->
+    <appender name="FILE_ALL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_HOME}/${APP_NAME}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- 每天滚动，或超过 50MB 时滚动 -->
+            <fileNamePattern>${LOG_HOME}/%d{yyyy-MM-dd}/${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <!-- 保留 30 天 -->
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== 秒杀专用文件（每次启动建新文件，不追加旧数据） ==================== -->
+    <appender name="FILE_SECKILL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_HOME}/seckill-${STARTUP}.log</file>
+        <append>false</append>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/%d{yyyy-MM-dd}/seckill-%d{yyyy-MM-dd}-%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== MyBatis SQL 日志 ==================== -->
+    <!-- 压测时建议关掉（改成 WARN），平时开发开 DEBUG -->
+    <!-- 压测时 level="WARN"；开发想看 SQL 调回 DEBUG -->
+    <logger name="com.faraday.flashsell.dao" level="WARN" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- ==================== 秒杀业务日志（写入专用文件） ==================== -->
+    <logger name="com.faraday.flashsell.service.SeckillService" level="DEBUG" additivity="true">
+        <appender-ref ref="FILE_SECKILL"/>
+    </logger>
+
+    <!-- 秒杀 Controller 也纳入 -->
+    <logger name="com.faraday.flashsell.controller.SeckillController" level="DEBUG" additivity="true">
+        <appender-ref ref="FILE_SECKILL"/>
+    </logger>
+
+    <!-- ==================== 项目整体日志级别 ==================== -->
+    <logger name="com.faraday.flashsell" level="DEBUG"/>
+
+    <!-- Spring 框架自身日志，压测时用 WARN 减少噪音 -->
+    <logger name="org.springframework" level="WARN"/>
+    <logger name="org.apache" level="WARN"/>
+
+    <!-- ==================== 根 Logger ==================== -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE_ALL"/>
+    </root>
+
+</configuration>
